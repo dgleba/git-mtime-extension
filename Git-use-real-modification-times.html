@@ -1,0 +1,579 @@
+<html lang='en'>  <head>
+     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <link rel='stylesheet' type='text/css' href='stylesheet.css'>
+    <link rel="icon" type="image/png" href="icon.png" />
+    <script src="scripts.js" type="text/javascript" ></script>
+    
+    <meta name="description" content="          <p>We had a problem with git not storing modify/acces times of files (which is from design not to confuse compilers with older times), which broke some diffing software (which relied on these). Unlike other's available solution we needed to store actual modify time and not just commit times, so a new solution had to be written. This stores mtimes of edited files to .mtimes file (which is passed to users over git server)  and then applies them on every checkout. Hooks has to be applied ">
+    <meta name="keywords" content="           Git - use real modification times            git correct wrong modification dates            'programming' 'bash' 'linux' 'git'">
+    <meta name="author" content="Karel Tuček">
+    <title>           Git - use real modification times</title>  </head>
+  <body onload="Resize();" onresize="Resize();">
+    <div class="middle">
+	<div class="head" id="head" onclick="ShowLogin();">
+		<div class="head">
+			<h1>Karl's Blog</h1>
+			<h3>of life of a programmer, musician and graphic artist...</h3>
+		</div>
+	</div>
+</div>
+
+<div id='menu'><a class='menulink' href='index.php?page=blog&id=55'>News</a> | <a class='menulink' href='index.php?page=page&id=56'>Music</a> | <a class='menulink' href='index.php?page=page&id=58'>Gallery</a> | <a class='menulink'  id='menu1' onmouseover=" HideAll(); Mark(1);document.getElementById('block1').style.visibility='visible'; ">Programming</a><div class='popup' id='block1' onmouseout="hovercount1++; setTimeout(function(){hovercount1--; if(hovercount1 <=0){document.getElementById('block1').style.visibility='hidden'; Unmark(1)}}, 1500);"><a class='menulink' href='index.php?page=page&id=60'>Blender 3D anaglyph</a> | <a class='menulink' href='index.php?page=page&id=61'>NBack (android)</a> | <a class='menulink' href='index.php?page=page&id=62'>FEdit</a> | <a class='menulink' href='index.php?page=page&id=63'>Type</a> | <a class='menulink' href='index.php?page=page&id=206'>ND space</a> | <a class='menulink' href='index.php?page=blog_post&id=212'>SHEdit - a VCL text editor</a> | <a class='menulink' href='index.php?page=blog&id=113'>Other</a></div> | <a class='menulink' href='http://84.42.186.246/' id='menu2' onmouseover=" HideAll(); Mark(2);document.getElementById('block2').style.visibility='visible'; ">Root</a><div class='popup' id='block2' onmouseout="hovercount2++; setTimeout(function(){hovercount2--; if(hovercount2 <=0){document.getElementById('block2').style.visibility='hidden'; Unmark(2)}}, 1500);"><a class='menulink' href='http://ktweb.cz/rady.php'>mobile dpp</a> | <a class='menulink' href='http://karls-gallery.t-hosting.cz'>My old blender gallery</a> | <a class='menulink' href='../random.php?zavora=42'>random number generator</a></div> | <a class='menulink' href='index.php?page=page&id=243'>Songbooks</a> | <a class='menulink' href='../tucek-cv.pdf'>CV</a>|<a class='menulink' href='index.php?page=page&id=116&lang=cs'>cs</a></div>
+      <div id="main">
+      <a href='index.php?page=page&id=116'><h1>           Git - use real modification times</h1></a>          <p>We had a problem with git not storing modify/acces times of files (which is from design not to confuse compilers with older times), which broke some diffing software (which relied on these). Unlike other's available solution we needed to store actual modify time and not just commit times, so a new solution had to be written. This stores mtimes of edited files to .mtimes file (which is passed to users over git server)  and then applies them on every checkout. Hooks has to be applied on client-side. This solution works well with cygwin/mingw versions of git, you may just need to copy some files from cygwin environment.
+<p>
+
+
+The solution consists of 3 files:
+
+<li>mtimestore - core script providing 3 option -a (save all - for initialization in already existing repo (works with git-versed files)), -s (to save staged changes), and -r to restore them. This actually comes in 2 versions - a bash one (portable, nice, easy to read/modify), and c version (messy one but fast, because mingw bash is horribly slow which makes impossible to use the bash solution on big projects).
+<li> pre-commit hook
+<li> post-checkout hook
+<p>
+<i><b>see github for up-to-date source code at <a href="https://github.com/kareltucek/git-mtime-extension">https://github.com/kareltucek/git-mtime-extension</a></b></i>
+<p>
+pre-commit:
+<pre class='code'>
+#!/bin/bash
+mtimestore -s
+git add .mtimes
+</pre>
+
+<p>
+post-checkout:
+<pre class='code'>#!/bin/bash
+mtimestore -r
+#git update-index --refresh #causes some problems under windows tortoise git
+</pre>
+<p>
+mtimestore:
+<pre class='code'>#!/bin/bash
+
+function usage 
+{
+  echo "Usage: mtimestore (-a|-s|-r)"
+  echo "Option	Meaning"
+  echo " -a	save-all - saves state of all files in a git repository"
+  echo " -s	save - saves mtime of all staged files of git repository"
+  echo " -r	restore - touches all files saved in .mtimes file"
+  exit 1
+}
+
+function echodate 
+{
+  echo "$(stat -c %Y "$1")|$1" &gt;&gt; .mtimes
+}
+
+IFS=$'\n'
+
+while getopts ":sar" optname
+do
+  case "$optname" in
+    "s")
+      echo "saving changes of staged files to file .mtimes"
+      if [ -f .mtimes ]
+      then
+        mv .mtimes .mtimes_tmp
+        pattern=".mtimes"
+        for str in $(git diff --name-only --staged)
+        do
+          pattern="$pattern\|$str"
+        done
+        cat .mtimes_tmp | grep -vh "|\($pattern\)\b" &gt;&gt; .mtimes
+      else
+        echo "warning: file .mtimes does not exist - creating new"
+      fi
+
+      for str in $(git diff --name-only --staged)
+      do
+        echodate "$str" 
+      done
+      rm .mtimes_tmp 2&gt; /dev/null
+      ;;
+    "a")
+      echo "saving mtimes of all files to file .mtimes"
+      rm .mtimes 2&gt; /dev/null
+      for str in $(git ls-files)
+      do
+        echodate "$str"
+      done
+      ;;
+    "r")
+      echo "restorim dates from .mtimes"
+      if [ -f .mtimes ]
+      then
+        cat .mtimes | while read line
+        do
+          timestamp=$(date -d "1970-01-01 ${line%|*} sec GMT" +%Y%m%d%H%M.%S)
+          touch -t $timestamp "${line#*|}"
+        done
+      else
+        echo "warning: .mtimes not found"
+      fi
+      ;;
+    ":")
+      usage
+      ;;
+    *)
+      usage
+      ;;
+esac
+done
+exit 0
+</pre>
+<pre class='code'>
+#include &lt;time.h&gt;
+#include &lt;utime.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;iostream&gt;
+#include &lt;cstdlib&gt;
+#include &lt;fstream&gt;
+#include &lt;string&gt;
+#include &lt;cerrno&gt;
+#include &lt;cstring&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;ctime&gt;
+#include &lt;map&gt;
+
+
+void changedate(int time, const char* filename)
+{
+  try
+  {
+    struct utimbuf new_times;
+    struct stat foo;
+    stat(filename, &foo);
+
+    new_times.actime = foo.st_atime;
+    new_times.modtime = time;
+    utime(filename, &new_times);
+  }
+  catch(...)
+  {}
+}
+
+bool parsenum(int& num, char*& ptr)
+{
+  num = 0;
+  if(!isdigit(*ptr))
+    return false;
+  while(isdigit(*ptr))
+  {
+    num = num*10 + (int)(*ptr) - 48;
+    ptr++;
+  }
+  return true;
+}
+
+//rozdělí line na číselnou část, a textovou část - číselnou vrátí do time, a ptr nastaví na pozici v line, kde začíná filename
+bool parseline(const char* line, int& time, char*& ptr)
+{
+  if(*line == '\n' || *line == '\r')
+    return false;
+  time = 0;
+  ptr = (char*)line;
+  if( parsenum(time, ptr))
+  { 
+    ptr++;
+    return true;
+  }
+  else
+    return false;
+}
+
+//nahraď \n na konci řádků (jinak je interpretován součástí názvu)
+void trim(char* string)
+{
+  char* ptr = string;
+  while(*ptr != '\0')
+  {
+    if(*ptr == '\n' || *ptr == '\r')
+      *ptr = '\0';
+    ptr++;
+  }
+}
+
+
+void help()
+{
+  std::cout &lt;&lt; "version: 1.4" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "usage: mtimestore &lt;switch&gt;" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "options:" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "	-a	saves mtimes of all git-versed files into .mtimes file (meant to be done on intialization of mtime fixes)" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "	-s	saves mtimes of modified staged files into .mtimes file(meant to be put into pre-commit hook)" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "	-r	restores mtimes from .mtimes file (that is meant to be stored in repository server-side and to be called in post-checkout hook)" &lt;&lt; std::endl;
+  std::cout &lt;&lt; "	-h	show this help" &lt;&lt; std::endl;
+}
+
+void load_file(const char* file, std::map&lt;std::string,int&gt;& mapa)
+{
+
+  std::string line;
+  std::ifstream myfile (file, std::ifstream::in);
+
+  if(myfile.is_open())
+  {
+      while ( myfile.good() )
+      {
+        getline (myfile,line);
+        int time;
+        char* ptr;
+        if( parseline(line.c_str(), time, ptr))
+        {
+          if(std::string(ptr) != std::string(".mtimes"))
+            mapa[std::string(ptr)] = time;
+        }
+      }
+    myfile.close();
+  }
+
+}
+
+void update(std::map&lt;std::string, int&gt;& mapa, bool all)
+{
+  char path[2048];
+  FILE *fp;
+  if(all)
+    fp = popen("git ls-files", "r");
+  else
+    fp = popen("git diff --name-only --staged", "r");
+
+  while(fgets(path, 2048, fp) != NULL)
+  {
+    trim(path);
+    struct stat foo;
+    int err = stat(path, &foo);
+    if(std::string(path) != std::string(".mtimes"))
+      mapa[std::string(path)]=foo.st_mtime;
+  }
+}
+
+void write(const char * file, std::map&lt;std::string, int&gt;& mapa)
+{
+  std::ofstream outputfile;
+  outputfile.open(".mtimes", std::ios::out);
+  for(std::map&lt;std::string, int&gt;::iterator itr = mapa.begin(); itr != mapa.end(); ++itr)
+  {
+    if(*(itr-&gt;first.c_str()) != '\0')
+    {
+      outputfile &lt;&lt; itr-&gt;second &lt;&lt; "|" &lt;&lt; itr-&gt;first &lt;&lt; std::endl;   
+    }
+  }
+  outputfile.close();
+}
+
+int main(int argc, char *argv[])
+{
+  //parsuj options podle unixového standardu
+  if(argc &gt;= 2 && argv[1][0] == '-')
+  {
+    switch(argv[1][1])
+    {
+      case 'r':
+        {
+          std::cout &lt;&lt; "restoring modification dates" &lt;&lt; std::endl;
+          std::string line;
+          std::ifstream myfile (".mtimes");
+          if (myfile.is_open())
+          {
+            while ( myfile.good() )
+            {
+              getline (myfile,line);
+              int time, time2;
+              char* ptr;
+              parseline(line.c_str(), time, ptr);
+              changedate(time, ptr);
+            }
+            myfile.close();
+          }
+        }
+        break;
+      case 'a':
+      case 's':
+        {
+          std::cout &lt;&lt; "saving modification times" &lt;&lt; std::endl;
+
+          std::map&lt;std::string, int&gt; mapa;
+          load_file(".mtimes", mapa);
+          update(mapa, argv[1][1] == 'a');
+          write(".mtimes", mapa);
+        }
+        break;
+      default:
+        help();
+        return 0;
+    }
+  }
+  else
+  {
+    help();
+    return 0;
+  }
+
+  return 0;
+}
+
+</pre>
+<p>
+
+hooks have to be either:<br>
+<li>placed into templates (C:\Program Files\Git\share\git-core\templates\hooks\) for automatic placement in newly created repository
+<li>placed under <repository>/.git/hooks/ for each repository it is to be applied on
+<p> 
+mtimestore has to be placed somewhere in $PATH, (i.e. /usr/bin/ under Linux or Program Files/Git/bin/ under windows)
+
+<H2>how does it internally work/how to use it</H2>
+<p>
+<li>before every commit "mtimestore -s" is called which stores mtimes of staged files into .mtimes file (that is done by pre-commit hook)
+<li>after every checkout all mtimes in repo are corrected using "mtimestore -r" (that is done by post-checkout hook)
+<li>on first use .mtimes has to be manually created using "mtimestore -a" and commited to repository
+
+<p>
+<center><a href="download/git-mtimestore-1.4.rar"> mingw windows package for download</a> </center> <br>
+(unix version is not provided because the installation is straightforward - no problems with libraries)<br><br><span class='label'>last updated 2015-02-15 09:40:32</span><br><br><hr style='width: 100%'><br>
+      <h1>new comment</h1><br>
+      <div style='text-align: right'><form method='POST' action='index.php?page=page&id=116'>
+      <input type='hidden' name='parent_id' value='116'>
+      <input type='hidden' name='type' value='6'><input type='hidden' name='timestamp' value='1473678263'><center>How many vertices does a 2 dimensional cube have?</center><input class='forms3' size='5' type='text' name='answer' value=''><br><br> <label >title: </label> <input  class='forms' type='text' name='name_en' value=''><br><label >text: </label> <textarea  title="&lt;code&gt;,&lt;b&gt;,&lt;i&gt;,&lt;h1&gt;-&lt;h3&gt tags can be used for formatting" class='forms' type='text' name='text_en'></textarea><br><label >author </label> <input  class='forms' type='text' name='custom_str1' value=''><br></div><center><input type='submit' name='submitted' value='Comment!'></center></form><br><h1></h1><span class='label'>author: Karel</span><br><br><p>Oh, very sorry for late answer - I had a problem with session variables (I had migrated to a ROM based system and having /var read-only is far from optimal.), due to which I had not noticed that comments were not working (I had replied on the same day you have posted). 
+
+<p> Thank you for fixes, all were pushed into github. I will no longer maintain other mirrors of the code. However, I will still let deprecated versions at their places.<br><br><span class='label'>last updated 2016-06-11 12:22:14</span><br><br><br><hr style='width:100%'><br><br><h1>BASH SCRIPT - REMOVED FILES FIX</h1><span class='label'>author: Charles</span><br><br>To avoid removed files re-appearing empty with beginning of epoch mtime, change the single line in the echodate function to:<br />
+<br />
+[[ -e "$1" ]] && echo "$(stat -c %Y "$1")|$1" &gt;&gt; .mtimes<br><br><span class='label'>last updated 2016-05-21 07:48:15</span><br><br><br><hr style='width:100%'><br><br><h1>BASH SCRIPT -a option fix</h1><span class='label'>author: Charles</span><br><br>    a)<br />
+      echo "saving mtimes of all files to file .mtimes"<br />
+      rm .mtimes 2&gt; /dev/null<br />
+      while IFS='' read -r -d '' file<br />
+      do<br />
+         [[ $file = .mtimes ]] && continue<br />
+         echodate "$file"<br />
+      done &lt; &lt;(git ls-files -z)<br />
+      ;;<br><br><span class='label'>last updated 2015-12-12 04:41:27</span><br><br><br><hr style='width:100%'><br><br><h1>Fixing the bash script for file names including |</h1><span class='label'>author: Charles</span><br><br>--- /usr/local/bin/mtimestore.org	2015-11-25 19:21:54.139562693 +0530<br />
++++ /usr/local/bin/mtimestore	2015-11-26 19:15:55.478536862 +0530<br />
+@@ -58,13 +58,13 @@<br />
+       done<br />
+       ;;<br />
+     "r")<br />
+-      echo "restorim dates from .mtimes"<br />
++      echo "restoring dates from .mtimes"<br />
+       if [ -f .mtimes ]<br />
+       then<br />
+         cat .mtimes | while read line<br />
+         do<br />
+-          timestamp=$(date -d "1970-01-01 ${line%|*} sec GMT" +%Y%m%d%H%M.%S)<br />
+-          touch -t $timestamp "${line##*|}"<br />
++          timestamp=$(date -d "1970-01-01 ${line%%|*} sec GMT" +%Y%m%d%H%M.%S)<br />
++          touch -t $timestamp "${line#*|}"<br />
+         done<br />
+       else<br />
+         echo "warning: .mtimes not found"<br><br><span class='label'>last updated 2015-11-26 14:55:54</span><br><br><br><hr style='width:100%'><br><br><h1>RE: how it works?</h1><span class='label'>author: Karel</span><br><br><p>I'm sorry, I did not notice your comment (I do have email notifications set up, but somehow it must have missed me). 
+<p>
+First thing you should try is to launch your "git bash" (e.g. from start->programs->git ) and try the command 'mtimestore'. You will either get some sort of help or a "not found" error or some other error. 
+<li> If you get not found, then it cant find the "mtimestore.exe". </li>
+<li> If you get "other error", you will have to resolve it </li>
+<li> if mtimestore script works ok, then there is a problem with your hooks.</li>
+
+<p> briefly everything should work if you do this:
+<li> download the rar above </li>
+<li> unrar it into your git's folder </li>
+<li> copy the hooks </li>
+<li> from git bash run 'mtimestore -a' in your repository's root</li><br><br><span class='label'>last updated 2015-03-07 13:01:57</span><br><br><br><hr style='width:100%'><br><br><h1>How it works?</h1><span class='label'>author: Webmaster33</span><br><br>I placed the pre-commit, post-checkout, mtimestore files to .git\hooks\ directory, installed CygWin32, cygwin/bin placed to PATH, and mtimestore.exe placed to C:\Program Files\Git\bin. Still, when I checkout, the files does not have the timestamps restored.<br />
+<br />
+Why does not work?<br><br><span class='label'>last updated 2015-01-14 21:09:56</span><br><br><br><hr style='width:100%'><br><br><h1>thanks</h1><span class='label'>author: David Gleba</span><br><br>Got the exe. Thanks.<br />
+<br />
+I will try compiling as you suggested this evening.<br><br><span class='label'>last updated 2013-12-03 17:06:18</span><br><br><br><hr style='width:100%'><br><br><h1>RE:Compile cpp</h1><span class='label'>author: Karel</span><br><br>I do not know what you did to the code or to the compiler, but it works straigh away if you use g++... Just open your cygwin bash, go to folder where the source code is and use command "<i>g++ main.cpp</i>".
+<p>
+The exe is here <a href="download/mtimestore.exe">here</a><br><br><span class='label'>last updated 2013-12-03 15:35:50</span><br><br><br><hr style='width:100%'><br><br><h1>compile cpp</h1><span class='label'>author: David Gleba</span><br><br>I installed codeblocks ide to compile the c++ version you have posted above.<br />
+<br />
+I got 50 errors.<br />
+<br />
+I don't have a burning need to compile it. If it's too much work to help me through compiling it, would you consider posting the windows-32 executable somewhere? Maybe github?<br />
+<br />
+These are just some of the errors.<br />
+<br />
+<pre class='code'>
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\stringfwd.h|43|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\stringfwd.h|44|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|64|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|65|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|137|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|138|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|243|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|244|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|264|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\cwchar|265|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\postypes.h|70|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\postypes.h|71|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\iosfwd|44|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\iosfwd|45|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\stl_algobase.h|74|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\char_traits.h|45|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\char_traits.h|46|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\char_traits.h|211|error: unknown type name 'namespace'|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\bits\char_traits.h|212|error: expected '=', ',', ';', 'asm' or '__attribute__' before '{' token|
+C:\p2\CodeBlocks\MinGW\lib\gcc\mingw32\4.7.1\include\c++\clocale|53|error: unknown type name 'namespace'|
+||More errors follow but not being shown.|
+||Edit the max errors limit in compiler options...|
+||=== Build failed: 50 error(s), 0 warning(s) (0 minute(s), 0 second(s)) ===|
+</pre><br><br><span class='label'>last updated 2013-12-03 14:50:34</span><br><br><br><hr style='width:100%'><br><br><h1>RE: Yes, error</h1><span class='label'>author: Karel</span><br><br>Yes, thanks... copy and paste :) <br><br><span class='label'>last updated 2013-12-02 18:46:23</span><br><br><br><hr style='width:100%'><br><br><h1>error?</h1><span class='label'>author: David Gleba  </span><br><br>I believe that there may be an error in your -a option code.<br />
+<br />
+It says:<br />
+<pre class='code'>for str in $(git diff --name-only --staged)</pre><br />
+<br />
+Should that be?<br />
+<pre class='code'>for str in $(git ls-files)</pre><br />
+<br />
+It is working for me after I make that change.<br />
+<br />
+This is my .mtimes file.<br />
+<br />
+<pre class='code'>
+1385562468|1.mtimes
+1385909961|2..mtimes
+1386000020|New Text Document1.txt
+1385909929|a/abc.txt
+1383138553|conf.ini
+1385518072|git,mtimes,date,format,notes.txt
+1380763252|gitdgnotes1.txt
+1385513597|readme.md
+1386000730|.mtimes
+</pre><br />
+<br />
+<br><br><span class='label'>last updated 2013-12-02 17:18:07</span><br><br><br><hr style='width:100%'><br><br><h1>RE: SPACES IN FILE NAMES </h1><span class='label'>author: Karel</span><br><br><p>No.
+<p>I would guess that some quotes are not interpretted at all somewhere, but it should not happen. I am not able to produce that problem again - spaces work ok here (under both systems). You can try to debug it using -x argument to bash (i.e. <i>'bash -x mtimestore -a'</i> with correct path to mtimestore).
+<p>
+Beside that I noticed problem with regex in your .mtimes - I fixed this, and as it changed the way words are separated, it may fix this as well.<br><br><span class='label'>last updated 2013-12-02 14:45:27</span><br><br><br><hr style='width:100%'><br><br><h1>Spaces in file names</h1><span class='label'>author: David Gleba</span><br><br>This is my .mtimes file.<br />
+<br />
+There is no date for the file named "new text document1.txt"<br />
+<br />
+thoughts?<br />
+<br />
+~=-=-=-=-=-=~ <br />
+<br />
+|.mtimes<br />
+|New Text Document1.txt<br />
+1383138553|conf.ini<br />
+1380763252|gitdgnotes1.txt<br />
+1385513597|readme.md<br />
+1385865895|.mtimes<br />
+1385562468|1.mtimes<br />
+|New Text Document1.txt<br />
+1385518072|git,mtimes,date,format,notes.txt<br />
+1385909929|a/abc.txt<br />
+<br />
+~=-=-=-=-=-=~ <br />
+<br><br><span class='label'>last updated 2013-12-02 00:43:59</span><br><br><br><hr style='width:100%'><br><br><h1>thanks</h1><span class='label'>author: David Gleba dgleba@gmail.com</span><br><br>That works!<br />
+<br />
+Thanks very much.<br><br><span class='label'>last updated 2013-12-02 00:38:56</span><br><br><br><hr style='width:100%'><br><br><h1>RE: Problem...</h1><span class='label'>author: Karel</span><br><br>Under linux the "@" apparently denotes that number is supposed to be seconds since epoch... Under windows it is not interpretted that way, and that's reason of both of the problems (with and without "@" - without it it is not valid anyway) 
+<p>It seems it can be solved by using format like:
+<pre class='code'>
+date -u --date="1970-01-01 1187769064 sec GMT"
+</pre>
+<p>Another thing I noticed is that under windows it loses some " and ' marks along the way, but here it does not seem to cause problems.
+<p>
+<b>/Edit</b> edited the bash version above, seems to work - tested udner windows and linux
+<p>And by the way thanks for pointing out the problems.<br><br><span class='label'>last updated 2013-12-01 17:22:19</span><br><br><br><hr style='width:100%'><br><br><h1>Problem...</h1><span class='label'>author: David Gleba</span><br><br>I get an error:<br />
+<br />
+<pre class='code'>
+work\test&gt;git.exe clone  --progress -v  "C:\n\Dropbox\csd\VCS-git\gitdg5" "C:\0\gittest\gitdg5g"
+Cloning into 'C:\0\gittest\gitdg5g'...
+done.
+restorim dates from .mtimes
+date: invalid date `@'
+touch: invalid date format `.mtimes'
+date: invalid date `@'
+touch: invalid date format `New Text Document1.txt'
+date: invalid date `@1383138553'
+touch: invalid date format `conf.ini'
+date: invalid date `@1380763252'
+</pre><br />
+<br />
+I took out the @ symbol and some apostrophe and I get this error.<br />
+<br />
+<br />
+<pre class='code'>
+git.exe clone  --progress -v  "C:\n\Dropbox\csd\VCS-git\gitdg5" "C:\0\gittest\gitdg5g"
+Cloning into 'C:\0\gittest\gitdg5g'...
+done.
+restorim dates from .mtimes
+date: invalid date `+%Y%m%d%H%M.%S'
+touch: invalid date format `.mtimes'
+date: invalid date `+%Y%m%d%H%M.%S'
+touch: invalid date format `New Text Document1.txt'
+date: invalid date `1383138553'
+touch: invalid date format `conf.ini'
+date: invalid date `1380763252'
+touch: invalid date format `gitdgnotes1.txt'
+date: invalid date `1385513597'
+</pre><br />
+<br />
+I think the epoch date 1385513597 is valid. I don't understand why the date command is complaining.<br />
+<br />
+I am using stat.exe from cygwin project. Date, and other commands are from 'git for windows'.<br />
+<br />
+Can you help me understand why it says date: invalid date `1380763252' ?<br><br><span class='label'>last updated 2013-12-01 16:10:28</span><br><br><br><hr style='width:100%'><br><br><h1></h1><span class='label'>author: Karel</span><br><br>I edited the bash version - it is rewritten to use same file format as the c version (that was my todo for longer time). That should solve (possible) problems with timezones, and also "spaces in filename" problem should be solved. (It works here on linux, but I cannot guarantee that it will as well under cygwin (i believe it should))<br><br><span class='label'>last updated 2013-11-28 18:43:59</span><br><br><br><hr style='width:100%'><br><br><h1>I Modified the timestamp format</h1><span class='label'>author: David Gleba</span><br><br>I did some troubleshooting and modified the timestamp generated by stat by cutting off the decimal seconds and the timezone. I am not sure deleting the timezone is a good idea. It is working now - it restores the mtimes correctly.<br />
+<br />
+function echodate {<br />
+  cutdate=$(echo $(stat -c %y "$1" ) | cut  -f1 -d"." )<br />
+  echo "touch -c -d \"$(echo "$cutdate")\" \"$1\"" &gt;&gt; .mtimes<br />
+}<br />
+<br />
+<br />
+I think the system may not be treating filenames with spaces well.<br />
+<br />
+touch -c -d "" "New"<br />
+touch -c -d "" "Text"<br />
+touch -c -d "" "Document.txt"<br />
+touch -c -d "2013-11-27 20:16:22" "gitdgnotes1.txt"<br />
+<br />
+This is the .mtimes file for a file named "new text document.txt"<br />
+<br />
+Do you think it can be changed to handle spaces in filenames?<br><br><span class='label'>last updated 2013-11-28 02:19:01</span><br><br><br><hr style='width:100%'><br><br><h1>RE: Error</h1><span class='label'>author: Karel</span><br><br>The date format is wrong. For some reason the touch has different syntax under cygwin and linux - when I wrote it, it seemed to work...
+<p>
+If you want to look into it yourself, the only thing you need to change is
+<pre class='code'>
+function echodate {
+  echo "touch -c -d \"$(stat -c %y "$1")\" \"$1\"" &gt;&gt; .mtimes
+}
+</pre>
+you can also look directly into the .mtimes yourself - the bash version just generates new bash script
+<p>
+
+Anyway it seems, the bash version needs to be changed a bit to avoid these problems. I will fix in few days.
+<br><br><span class='label'>last updated 2013-11-27 06:33:57</span><br><br><br><hr style='width:100%'><br><br><h1>error, can you help?</h1><span class='label'>author: David Gleba</span><br><br>I get this error on Windows.<br />
+Can you help me understand what is wrong?<br />
+<br />
+~=-=-=-=-=-=~ <br />
+<br />
+git.exe clone      --progress -v  "C:\n\Dropbox\csd\VCS-git\gitdg5" "C:\0\gitdg5,a\gitdg5"<br />
+Cloning into 'C:\0\gitdg5,a\gitdg5'...<br />
+done.<br />
+restorim dates from .mtimes<br />
+touch: invalid date format `2013-11-26 16:35:11.960241200 -0500'<br />
+touch: invalid date format `2013-11-26 16:32:10.059812200 -0500'<br />
+touch: invalid date format `2013-11-26 16:36:30.582725200 -0500'<br />
+<br />
+~=-=-=-=-=-=~ <br />
+<br><br><span class='label'>last updated 2013-11-27 02:15:43</span><br><br><br><hr style='width:100%'><br><br><h1>RE: stat</h1><span class='label'>author: Karel</span><br><br>I suppose you use the bash version inside of git (mingw) installation. Then you can either:
+<p>
+<li>Install cygwin ( http://www.cygwin.com/ ) and copy the stat.exe from there. Then test and copy all other files it complains about. (This is tested and works without much mess, though it is not really clean solution)<br />
+<li> Search for help at official mingw community. (I'm not turning you away, it's just a sensible option if you don't like/can/want use cygwin)<br />
+<br><br><span class='label'>last updated 2013-10-04 15:23:18</span><br><br><br><hr style='width:100%'><br><br><h1>stat</h1><span class='label'>author: David - dgleba@gmail.com</span><br><br>I am looking for a stat.exe for windows that will work with this. Any ideas?<br><br><span class='label'>last updated 2013-10-04 13:01:55</span><br><br><br><hr style='width:100%'><br><br>
+      </div><br><br>
+    <div id="foot">
+<hr style="width: 200px">
+copyright:<br> Karel Tuček 
+</div>
+
+    <div id="screen">
+      <div id="nextscreen" onclick="NextScreen()"></div>
+      <a href="" id="maxscreenhref"><div id="maxscreen" ></div></a>
+      <div id="unscreen" onclick="UnScreen()"></div>
+      <div id="prevscreen" onclick="PrevScreen()"></div>
+      <div id="screen2">
+      <img src="" id="screenimg" onclick="UnScreen()">
+      </div>
+
+    </div>
+<script type="text/javascript" >
+var hovercount0 = 0;var hovercount1 = 0;var hovercount2 = 0;</script>
+  </body>
+</html>
